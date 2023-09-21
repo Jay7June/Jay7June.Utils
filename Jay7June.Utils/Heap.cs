@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Jay7June.Utils
 {
@@ -7,12 +8,17 @@ namespace Jay7June.Utils
     {
         readonly List<T> _elements;
         private int _changeIndex = -1;
-
         public readonly IComparer<T> HeapComparer;
 
         public int Count
         {
             get { return _changeIndex == -1 ? _elements.Count : _elements.Count - 1; }
+        }
+
+        public int Capacity
+        {
+            set { _elements.Capacity = _elements.Count >= value ? _elements.Count : value; }
+            get { return _elements.Capacity; }
         }
 
         /// <summary>
@@ -63,14 +69,20 @@ namespace Jay7June.Utils
                 _changeIndex = _elements.Count;
                 _elements.Add(item);
             }
-            UpdateHeap();
+            BubbleUp(_changeIndex);
+            BubbleDown(_changeIndex);
+            _changeIndex = -1;
         }
 
         public void Remove(T item)
         {
             if (_changeIndex > -1)
             {
-                DeleteChangedIndexItem();
+                _elements[_changeIndex] = _elements[_elements.Count - 1];
+                _elements.RemoveAt(_elements.Count - 1);
+                BubbleUp(_changeIndex);
+                BubbleDown(_changeIndex);
+                _changeIndex = -1;
             }
             int i = _elements.IndexOf(item);
             _changeIndex = i;
@@ -78,30 +90,89 @@ namespace Jay7June.Utils
 
         public T Pop()
         {
-            if (_changeIndex > -1)
+            if (_elements.Count > 1)
             {
-                DeleteChangedIndexItem();
-            }
-            if (_elements.Count > 0)
-            {
+                if (_changeIndex > -1)
+                {
+                    _elements[_changeIndex] = _elements[_elements.Count - 1];
+                    _elements.RemoveAt(_elements.Count - 1);
+                    BubbleUp(_changeIndex);
+                    BubbleDown(_changeIndex);
+                }
                 T rst = _elements[0];
                 _changeIndex = 0;
                 return rst;
             }
-            throw new IndexOutOfRangeException();
+            if (_elements.Count == 1 && _changeIndex == -1)
+            {
+                _changeIndex = 0;
+                return _elements[0];
+            }
+            throw new InvalidOperationException();
+        }
+
+        public bool TryPop([MaybeNullWhen(false)] out T item)
+        {
+            if (_elements.Count > 1)
+            {
+                if (_changeIndex > -1)
+                {
+                    _elements[_changeIndex] = _elements[_elements.Count - 1];
+                    _elements.RemoveAt(_elements.Count - 1);
+                    BubbleUp(_changeIndex);
+                    BubbleDown(_changeIndex);
+                }
+                item = _elements[0];
+                _changeIndex = 0;
+                return true;
+            }
+            if (_elements.Count == 1 && _changeIndex == -1)
+            {
+                _changeIndex = 0;
+                item = _elements[0];
+                return true;
+            }
+            item = default;
+            return false;
         }
 
         public T Peek()
         {
-            if (_changeIndex == 0)
-            {
-                DeleteChangedIndexItem();
-            }
-            if (_elements.Count > 0)
+            if (_changeIndex != 0 && _elements.Count > 0)
             {
                 return _elements[0];
             }
-            throw new IndexOutOfRangeException();
+            if (_changeIndex == 0 && _elements.Count > 1)
+            {
+                _elements[_changeIndex] = _elements[_elements.Count - 1];
+                _elements.RemoveAt(_elements.Count - 1);
+                BubbleUp(_changeIndex);
+                BubbleDown(_changeIndex);
+                _changeIndex = -1;
+                return _elements[0];
+            }
+            throw new InvalidOperationException();
+        }
+
+        public bool TryPeek([MaybeNullWhen(false)] out T item)
+        {
+            if (_changeIndex != 0 && _elements.Count > 0)
+            {
+                item = _elements[0];
+                return true;
+            }
+            if (_changeIndex == 0 && _elements.Count > 1)
+            {
+                _elements[_changeIndex] = _elements[_elements.Count - 1];
+                _elements.RemoveAt(_elements.Count - 1);
+                BubbleUp(_changeIndex);
+                BubbleDown(_changeIndex);
+                _changeIndex = -1;
+                item = _elements[0];
+                return true;
+            }
+            item = default;
+            return false;
         }
 
         public void Clear()
@@ -110,51 +181,16 @@ namespace Jay7June.Utils
             _changeIndex = -1;
         }
 
-        private void DeleteChangedIndexItem()
-        {
-            _elements[_changeIndex] = _elements[_elements.Count - 1];
-            _elements.RemoveAt(_elements.Count - 1);
-            UpdateHeap();
-        }
-
-        private void UpdateHeap()
-        {
-            if (IsBubbleUp())
-            {
-                BubbleUp(_changeIndex);
-            }
-            else
-            {
-                BubbleDown(_changeIndex);
-            }
-            _changeIndex = -1;
-        }
-
-        private bool IsBubbleUp()
-        {
-            if (_changeIndex == 0)
-            {
-                return false;
-            }
-            var parentIndex = (_changeIndex + 1) / 2 - 1;
-            var leftChildIndex = (_changeIndex * 2) + 1;
-            if (
-                leftChildIndex > Count - 1
-                || HeapComparer.Compare(_elements[parentIndex], _elements[_changeIndex]) > 0
-            )
-            {
-                return true;
-            }
-            return false;
-        }
-
         private void BubbleUp(int startIndex)
         {
             while (startIndex > 0)
             {
                 int parentPosition = (startIndex + 1) / 2 - 1;
-                if (Swap(startIndex, parentPosition))
+                if (parentPosition >= 0 && startIndex < _elements.Count && HeapComparer.Compare(_elements[parentPosition], _elements[startIndex]) > 0)
                 {
+                    var temp = _elements[parentPosition];
+                    _elements[parentPosition] = _elements[startIndex];
+                    _elements[startIndex] = temp;
                     startIndex = parentPosition;
                 }
                 else
@@ -170,9 +206,13 @@ namespace Jay7June.Utils
             while (leftChildIndex <= _elements.Count - 2)
             {
                 int rightChildIndex = leftChildIndex + 1;
-                int bestChildIndex = GetBestChildIndex(leftChildIndex, rightChildIndex);
-                if (Swap(bestChildIndex, rootIndex))
+                int bestChildIndex =
+                    HeapComparer.Compare(_elements[leftChildIndex], _elements[rightChildIndex]) > 0 ? rightChildIndex : leftChildIndex;
+                if (rootIndex >= 0 && bestChildIndex < _elements.Count && HeapComparer.Compare(_elements[rootIndex], _elements[bestChildIndex]) > 0)
                 {
+                    var temp = _elements[rootIndex];
+                    _elements[rootIndex] = _elements[bestChildIndex];
+                    _elements[bestChildIndex] = temp;
                     rootIndex = bestChildIndex;
                     leftChildIndex = (rootIndex * 2) + 1;
                 }
@@ -181,34 +221,12 @@ namespace Jay7June.Utils
                     break;
                 }
             }
-            if (leftChildIndex < _elements.Count)
+            if (leftChildIndex < _elements.Count && HeapComparer.Compare(_elements[rootIndex], _elements[leftChildIndex]) > 0)
             {
-                Swap(leftChildIndex, rootIndex);
+                var temp = _elements[rootIndex];
+                _elements[rootIndex] = _elements[leftChildIndex];
+                _elements[leftChildIndex] = temp;
             }
-        }
-
-        private bool Swap(int childIndex, int parentIndex)
-        {
-            if (
-                parentIndex >= 0
-                && childIndex < _elements.Count
-                && HeapComparer.Compare(_elements[parentIndex], _elements[childIndex]) > 0
-            )
-            {
-                (_elements[parentIndex], _elements[childIndex]) = (
-                    _elements[childIndex],
-                    _elements[parentIndex]
-                );
-                return true;
-            }
-            return false;
-        }
-
-        private int GetBestChildIndex(int leftChildIndex, int rightChildIndex)
-        {
-            return HeapComparer.Compare(_elements[leftChildIndex], _elements[rightChildIndex]) > 0
-                ? rightChildIndex
-                : leftChildIndex;
         }
     }
 }
